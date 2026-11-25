@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 class ChatScreen extends StatefulWidget {
   final String otherUserId;
@@ -14,6 +16,47 @@ class ChatScreen extends StatefulWidget {
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
+}
+
+String formatChatLastSeen(num? timestamp) {
+  if (timestamp == null) return 'Last seen recently';
+
+  final date = DateTime.fromMillisecondsSinceEpoch(timestamp.toInt()).toLocal();
+
+  final now = DateTime.now();
+
+  final today = DateTime(now.year, now.month, now.day);
+  final yesterday = today.subtract(const Duration(days: 1));
+
+  final seenDate = DateTime(date.year, date.month, date.day);
+
+  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+  final minute = date.minute.toString().padLeft(2, '0');
+  final period = date.hour >= 12 ? 'PM' : 'AM';
+
+  final time = '$hour:$minute $period';
+
+  if (seenDate == today) {
+    return 'Last seen today at $time';
+  }
+
+  if (seenDate == yesterday) {
+    return 'Last seen yesterday at $time';
+  }
+
+  return 'Last seen ${date.day}/${date.month}/${date.year} at $time';
+}
+
+String formatMessageTime(Timestamp? timestamp) {
+  if (timestamp == null) return '';
+
+  final date = timestamp.toDate().toLocal();
+
+  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+  final minute = date.minute.toString().padLeft(2, '0');
+  final period = date.hour >= 12 ? 'PM' : 'AM';
+
+  return '$hour:$minute $period';
 }
 
 class _ChatScreenState extends State<ChatScreen> {
@@ -98,9 +141,54 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.otherUserName),
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
+
+        title: StreamBuilder<DatabaseEvent>(
+          stream: FirebaseDatabase.instanceFor(
+            app: Firebase.app(),
+            databaseURL:
+                'https://my-chat-app-b3ff3-default-rtdb.firebaseio.com/',
+          ).ref('status/${widget.otherUserId}').onValue,
+
+          builder: (context, snapshot) {
+            final data = snapshot.data?.snapshot.value;
+
+            String statusText = 'Checking status...';
+            Color statusColor = Colors.white70;
+
+            if (data is Map) {
+              final state = data['state'];
+              final timestamp = data['last_changed'];
+
+              if (state == 'online') {
+                statusText = 'Online';
+                statusColor = Colors.lightGreenAccent;
+              } else {
+                statusText = formatChatLastSeen(
+                  timestamp is num ? timestamp : null,
+                );
+              }
+            } else if (snapshot.hasData) {
+              statusText = 'Offline';
+            }
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.otherUserName,
+                  style: const TextStyle(fontSize: 18),
+                ),
+                Text(
+                  statusText,
+                  style: TextStyle(fontSize: 12, color: statusColor),
+                ),
+              ],
+            );
+          },
+        ),
       ),
 
       body: Column(
@@ -158,12 +246,30 @@ class _ChatScreenState extends State<ChatScreen> {
                           borderRadius: BorderRadius.circular(15),
                         ),
 
-                        child: Text(
-                          data['text'] ?? '',
-                          style: TextStyle(
-                            color: isMe ? Colors.white : Colors.black,
-                            fontSize: 16,
-                          ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              data['text'] ?? '',
+                              style: TextStyle(
+                                color: isMe ? Colors.white : Colors.black,
+                                fontSize: 16,
+                              ),
+                            ),
+
+                            const SizedBox(height: 5),
+
+                            Text(
+                              formatMessageTime(
+                                data['createdAt'] as Timestamp?,
+                              ),
+                              style: TextStyle(
+                                color: isMe ? Colors.white70 : Colors.black54,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     );

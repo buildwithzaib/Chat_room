@@ -1,6 +1,8 @@
 // ignore_for_file: avoid_print
 import 'screens/chat_screen.dart';
+import 'services/presence_service.dart';
 
+import 'package:firebase_database/firebase_database.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -18,6 +20,37 @@ String formatChatTime(Timestamp? timestamp) {
   final period = date.hour >= 12 ? 'PM' : 'AM';
 
   return '$hour:$minute $period';
+}
+
+String formatLastSeen(num? timestamp) {
+  if (timestamp == null) return 'Last seen recently';
+
+  final date = DateTime.fromMillisecondsSinceEpoch(timestamp.toInt()).toLocal();
+
+  final now = DateTime.now();
+
+  final today = DateTime(now.year, now.month, now.day);
+  final yesterday = today.subtract(const Duration(days: 1));
+  final seenDate = DateTime(date.year, date.month, date.day);
+
+  final hour = date.hour % 12 == 0 ? 12 : date.hour % 12;
+  final minute = date.minute.toString().padLeft(2, '0');
+  final period = date.hour >= 12 ? 'PM' : 'AM';
+
+  final time = '$hour:$minute $period';
+
+  if (seenDate == today) {
+    return 'Last seen today at $time';
+  }
+
+  if (seenDate == yesterday) {
+    return 'Last seen yesterday at $time';
+  }
+
+  final day = date.day.toString().padLeft(2, '0');
+  final month = date.month.toString().padLeft(2, '0');
+
+  return 'Last seen $day/$month/${date.year} at $time';
 }
 
 void main() async {
@@ -397,8 +430,21 @@ class _SignupScreenState extends State<SignupScreen> {
 
 //Home screen
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  @override
+  void initState() {
+    super.initState();
+
+    // User ko online karna
+    PresenceService.instance.startPresence();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -411,6 +457,10 @@ class HomeScreen extends StatelessWidget {
         actions: [
           IconButton(
             onPressed: () async {
+              // User ko offline karo
+              await PresenceService.instance.stopPresence();
+
+              // User logout
               await FirebaseAuth.instance.signOut();
             },
             icon: const Icon(Icons.logout),
@@ -468,29 +518,123 @@ class HomeScreen extends StatelessWidget {
                   final timestamp = chatData?['updatedAt'] as Timestamp?;
 
                   return ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: Colors.blue,
-                      child: Text(
-                        name.isNotEmpty ? name[0].toUpperCase() : '?',
-                        style: const TextStyle(color: Colors.white),
-                      ),
+                    leading: StreamBuilder<DatabaseEvent>(
+                      stream: FirebaseDatabase.instanceFor(
+                        app: Firebase.app(),
+                        databaseURL: 'https://my-chat-app-b3ff3-default-rtdb.firebaseio.com/',
+                      ).ref('status/$otherUserId').onValue,
+
+                      builder: (context, statusSnapshot) {
+                        bool isOnline = false;
+
+                        if (statusSnapshot.hasData) {
+                          final data = statusSnapshot.data!.snapshot.value;
+
+                          if (data is Map) {
+                            isOnline = data['state'] == 'online';
+                          }
+                        }
+
+                        return Stack(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: Colors.blue,
+                              child: Text(
+                                name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                            ),
+
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: Container(
+                                width: 13,
+                                height: 13,
+                                decoration: BoxDecoration(
+                                  color: isOnline ? Colors.green : Colors.grey,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: Colors.white,
+                                    width: 2,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        );
+                      },
                     ),
                     title: Text(
                       name,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
-                    subtitle: Text(
-                      lastMessage.toString().isNotEmpty
-                          ? lastMessage.toString()
-                          : email,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          lastMessage.toString().isNotEmpty
+                              ? lastMessage.toString()
+                              : email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        StreamBuilder<DatabaseEvent>(
+                          stream: FirebaseDatabase.instanceFor(
+                            app: Firebase.app(),
+                            databaseURL: 'https://my-chat-app-b3ff3-default-rtdb.firebaseio.com/',
+                          ).ref('status/$otherUserId').onValue,
+
+                          builder: (context, statusSnapshot) {
+                            final data = statusSnapshot.data?.snapshot.value;
+
+                            if (data is Map) {
+                              final state = data['state'];
+                              final timestamp = data['last_changed'];
+
+                              if (state == 'online') {
+                                return const Text(
+                                  'Online',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                );
+                              }
+
+                              return Text(
+                                formatLastSeen(
+                                  timestamp is num ? timestamp : null,
+                                ),
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey,
+                                ),
+                              );
+                            }
+
+                            return const Text(
+                              'Offline',
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey,
+                              ),
+                            );
+                          },
+                        ),
+                      ],
                     ),
                     trailing: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
                           formatChatTime(timestamp),
+
                           style: const TextStyle(
                             fontSize: 12,
                             color: Colors.grey,
