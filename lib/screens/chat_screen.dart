@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -61,8 +63,24 @@ String formatMessageTime(Timestamp? timestamp) {
 
 class _ChatScreenState extends State<ChatScreen> {
   final messageController = TextEditingController();
+  StreamSubscription<QuerySnapshot>? readSubscription;
 
   bool isSending = false;
+  Timer? typingTimer;
+
+  final FirebaseDatabase database = FirebaseDatabase.instanceFor(
+    app: Firebase.app(),
+    databaseURL: 'https://my-chat-app-b3ff3-default-rtdb.firebaseio.com/',
+  );
+
+  DatabaseReference get myTypingRef {
+    final currentUserId = FirebaseAuth.instance.currentUser!.uid;
+    return database.ref('typing/$chatId/$currentUserId');
+  }
+
+  DatabaseReference get otherTypingRef {
+    return database.ref('typing/$chatId/${widget.otherUserId}');
+  }
 
   String get chatId {
     final currentUserId = FirebaseAuth.instance.currentUser!.uid;
@@ -72,6 +90,63 @@ class _ChatScreenState extends State<ChatScreen> {
     ids.sort();
 
     return ids.join('_');
+  }
+
+  Future<void> markMessagesAsRead() async {
+    try {
+      final currentUserId = FirebaseAuth.instance.currentUser!.uid;
+
+      final messagesRef = FirebaseFirestore.instance
+          .collection('chats')
+          .doc(chatId)
+          .collection('messages');
+
+      final unreadMessages = await messagesRef
+          .where('receiverId', isEqualTo: currentUserId)
+          .where('isRead', isEqualTo: false)
+          .get();
+
+      final batch = FirebaseFirestore.instance.batch();
+
+      for (final doc in unreadMessages.docs) {
+        batch.update(doc.reference, {
+          'isRead': true,
+          'readAt': FieldValue.serverTimestamp(),
+        });
+      }
+
+      if (unreadMessages.docs.isNotEmpty) {
+        await batch.commit();
+        print('Messages marked as READ!');
+      }
+    } catch (e) {
+      print('READ RECEIPT ERROR: $e');
+    }
+  }
+
+  Future<void> updateTypingStatus(bool isTyping) async {
+    try {
+      await myTypingRef.set(isTyping);
+    } catch (e) {
+      print('TYPING STATUS ERROR: $e');
+    }
+  }
+
+  void handleTyping(String value) {
+    typingTimer?.cancel();
+
+    if (value.trim().isEmpty) {
+      updateTypingStatus(false);
+      return;
+    }
+
+    updateTypingStatus(true);
+
+    // Agar 2 seconds tak typing na ho,
+    // to status automatically false ho jayega.
+    typingTimer = Timer(const Duration(seconds: 2), () {
+      updateTypingStatus(false);
+    });
   }
 
   Future<void> sendMessage() async {
@@ -103,9 +178,14 @@ class _ChatScreenState extends State<ChatScreen> {
         'receiverId': widget.otherUserId,
         'text': message,
         'createdAt': FieldValue.serverTimestamp(),
+        'isRead': false,
+        'readAt': null,
       });
 
       messageController.clear();
+
+      typingTimer?.cancel();
+      await updateTypingStatus(false);
     } catch (e) {
       print("MESSAGE ERROR: $e");
 
@@ -124,8 +204,28 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+
+    final messagesRef = FirebaseFirestore.instance
+        .collection('chats')
+        .doc(chatId)
+        .collection('messages');
+
+    readSubscription = messagesRef.snapshots().listen((snapshot) {
+      markMessagesAsRead();
+    });
+  }
+
+  @override
   void dispose() {
+    readSubscription?.cancel();
+
+    typingTimer?.cancel();
+    updateTypingStatus(false);
+
     messageController.dispose();
+
     super.dispose();
   }
 
@@ -173,19 +273,34 @@ class _ChatScreenState extends State<ChatScreen> {
               statusText = 'Offline';
             }
 
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  widget.otherUserName,
-                  style: const TextStyle(fontSize: 18),
-                ),
-                Text(
-                  statusText,
-                  style: TextStyle(fontSize: 12, color: statusColor),
-                ),
-              ],
+            return StreamBuilder<DatabaseEvent>(
+              stream: otherTypingRef.onValue,
+
+              builder: (context, typingSnapshot) {
+                final isOtherTyping =
+                    typingSnapshot.data?.snapshot.value == true;
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      widget.otherUserName,
+                      style: const TextStyle(fontSize: 18),
+                    ),
+
+                    Text(
+                      isOtherTyping ? 'typing...' : statusText,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: isOtherTyping
+                            ? Colors.lightGreenAccent
+                            : statusColor,
+                      ),
+                    ),
+                  ],
+                );
+              },
             );
           },
         ),
@@ -260,14 +375,35 @@ class _ChatScreenState extends State<ChatScreen> {
 
                             const SizedBox(height: 5),
 
-                            Text(
-                              formatMessageTime(
-                                data['createdAt'] as Timestamp?,
-                              ),
-                              style: TextStyle(
-                                color: isMe ? Colors.white70 : Colors.black54,
-                                fontSize: 10,
-                              ),
+                            const SizedBox(height: 5),
+
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  formatMessageTime(
+                                    data['createdAt'] as Timestamp?,
+                                  ),
+                                  style: TextStyle(
+                                    color: isMe
+                                        ? Colors.white70
+                                        : Colors.black54,
+                                    fontSize: 10,
+                                  ),
+                                ),
+
+                                if (isMe) ...[
+                                  const SizedBox(width: 4),
+
+                                  Icon(
+                                    Icons.done_all,
+                                    size: 16,
+                                    color: data['isRead'] == true
+                                        ? Colors.lightBlueAccent
+                                        : Colors.white70,
+                                  ),
+                                ],
+                              ],
                             ),
                           ],
                         ),
@@ -288,6 +424,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: TextField(
                     controller: messageController,
+                    onChanged: handleTyping,
+
                     decoration: const InputDecoration(
                       hintText: "Type a message...",
                       border: OutlineInputBorder(),
