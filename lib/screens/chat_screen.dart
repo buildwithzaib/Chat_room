@@ -220,12 +220,7 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     readSubscription?.cancel();
-
-    typingTimer?.cancel();
-    updateTypingStatus(false);
-
     messageController.dispose();
-
     super.dispose();
   }
 
@@ -273,34 +268,19 @@ class _ChatScreenState extends State<ChatScreen> {
               statusText = 'Offline';
             }
 
-            return StreamBuilder<DatabaseEvent>(
-              stream: otherTypingRef.onValue,
-
-              builder: (context, typingSnapshot) {
-                final isOtherTyping =
-                    typingSnapshot.data?.snapshot.value == true;
-
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      widget.otherUserName,
-                      style: const TextStyle(fontSize: 18),
-                    ),
-
-                    Text(
-                      isOtherTyping ? 'typing...' : statusText,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isOtherTyping
-                            ? Colors.lightGreenAccent
-                            : statusColor,
-                      ),
-                    ),
-                  ],
-                );
-              },
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  widget.otherUserName,
+                  style: const TextStyle(fontSize: 18),
+                ),
+                Text(
+                  statusText,
+                  style: TextStyle(fontSize: 12, color: statusColor),
+                ),
+              ],
             );
           },
         ),
@@ -414,8 +394,6 @@ class _ChatScreenState extends State<ChatScreen> {
               },
             ),
           ),
-
-          // Message input
           Container(
             padding: const EdgeInsets.all(10),
 

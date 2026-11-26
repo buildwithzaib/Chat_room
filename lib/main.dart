@@ -1,7 +1,9 @@
 // ignore_for_file: avoid_print
 import 'screens/chat_screen.dart';
 import 'services/presence_service.dart';
+import 'screens/contacts_screen.dart';
 
+import 'package:flutter_contacts/flutter_contacts.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -261,6 +263,7 @@ class _SignupScreenState extends State<SignupScreen> {
   final nameController = TextEditingController();
   final emailController = TextEditingController();
   final passwordController = TextEditingController();
+  final phoneNumberController = TextEditingController();
 
   bool isLoading = false;
 
@@ -268,7 +271,8 @@ class _SignupScreenState extends State<SignupScreen> {
     // Check empty fields
     if (nameController.text.trim().isEmpty ||
         emailController.text.trim().isEmpty ||
-        passwordController.text.isEmpty) {
+        passwordController.text.isEmpty ||
+        phoneNumberController.text.trim().isEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text("Please fill all fields")));
@@ -296,6 +300,7 @@ class _SignupScreenState extends State<SignupScreen> {
           'uid': user.uid,
           'name': nameController.text.trim(),
           'email': emailController.text.trim(),
+          'phoneNumber': phoneNumberController.text.trim(),
           'createdAt': FieldValue.serverTimestamp(),
         });
 
@@ -344,6 +349,7 @@ class _SignupScreenState extends State<SignupScreen> {
     nameController.dispose();
     emailController.dispose();
     passwordController.dispose();
+    phoneNumberController.dispose();
     super.dispose();
   }
 
@@ -388,6 +394,18 @@ class _SignupScreenState extends State<SignupScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Email',
                   prefixIcon: Icon(Icons.email),
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              TextField(
+                controller: phoneNumberController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone Number',
+                  hintText: '+923001234567',
+                  prefixIcon: Icon(Icons.phone),
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -446,6 +464,35 @@ class _HomeScreenState extends State<HomeScreen> {
     PresenceService.instance.startPresence();
   }
 
+  // contacts permission function
+  Future<void> getContacts() async {
+    final permission = await FlutterContacts.permissions.request(
+      PermissionType.read,
+    );
+
+    if (permission == PermissionStatus.granted ||
+        permission == PermissionStatus.limited) {
+      final contacts = await FlutterContacts.getAll(
+        properties: {ContactProperty.name, ContactProperty.phone},
+      );
+
+      print("Total Contacts: ${contacts.length}");
+
+      for (var contact in contacts) {
+        print("Name: ${contact.displayName}");
+        print("Phone count: ${contact.phones.length}");
+
+        for (var phone in contact.phones) {
+          print("Phone: ${phone.number}");
+        }
+
+        print("----------------------");
+      }
+    } else {
+      print("Contacts permission denied!");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final currentUser = FirebaseAuth.instance.currentUser;
@@ -455,6 +502,15 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text("Chat Room"),
         centerTitle: true,
         actions: [
+          IconButton(
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const ContactsScreen()),
+              );
+            },
+            icon: const Icon(Icons.contacts),
+          ),
           IconButton(
             onPressed: () async {
               // User ko offline karo
